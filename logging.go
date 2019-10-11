@@ -2,10 +2,10 @@ package joker
 
 import (
 	"fmt"
-	"github.com/braveghost/viper"
+	"github.com/braveghost/meteor/errutil"
 	"github.com/braveghost/meteor/file"
 	"github.com/braveghost/meteor/mode"
-	"github.com/braveghost/meteor/errutil"
+	"github.com/braveghost/viper"
 	"github.com/micro/go-micro/server"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -58,6 +58,10 @@ func init() {
 	SetLogPathAuto()
 	GetLogger(defaultLoggerName, mode.ModeLocal)
 
+}
+
+func SetRequestIdKey(key string) {
+	requestIdKey = key
 }
 
 // 根据环境变量设置日志文件存放路径
@@ -132,13 +136,13 @@ func InitLogger(md mode.ModeType, outRr, errRr *RollRule, fields []zap.Field, ec
 		// 打印到控制台和文件
 		outWriter = append(outWriter, zapcore.AddSync(os.Stdout))
 	}
-	core := zapcore.NewCore(
+	outputCore := zapcore.NewCore(
 		zapcore.NewConsoleEncoder(*ec), // 编码器配置
 		zapcore.NewMultiWriteSyncer(outWriter...),
 		zap.NewAtomicLevelAt(level), // 日志级别
 	)
-
-	var outOption = []zap.Option{
+	fmt.Println(outputCore)
+	var options = []zap.Option{
 		// 开启堆栈跟踪
 		zap.AddCaller(),
 		// 因为 operate 包装了一层所以堆栈信息加1
@@ -147,25 +151,39 @@ func InitLogger(md mode.ModeType, outRr, errRr *RollRule, fields []zap.Field, ec
 		zap.Development(),
 		// 设置初始化字段
 		zap.Fields(fields...),
+		zap.ErrorOutput(zapcore.AddSync(os.Stderr)),
 	}
+
+	var errCore zapcore.Core
 
 	if errRr != nil {
 		// 无默认, 错误日志规则传入 nil 表示不独立写错误日志文件
 
+		var errWriter []zapcore.WriteSyncer
+
 		errHook := getErrHook(errRr)
 		if errHook != nil {
-			outOption = append(outOption, zap.ErrorOutput(errHook))
-
+			errWriter = append(errWriter, errHook)
 		}
+
 		if level == zapcore.DebugLevel {
-			outOption = append(outOption, zap.ErrorOutput(zapcore.AddSync(os.Stderr)))
+			// 打印到控制台和文件
+			errWriter = append(errWriter, zapcore.AddSync(os.Stdout))
 		}
-
+		errCore = zapcore.NewCore(
+			zapcore.NewConsoleEncoder(*ec), // 编码器配置
+			zapcore.NewMultiWriteSyncer(errWriter...),
+			zap.NewAtomicLevelAt(zap.ErrorLevel), // 日志级别
+		)
 	}
 
-	// 构造日志
-	logger := zap.New(core, outOption...)
+	cores := zapcore.NewTee(
+		outputCore,
+		errCore,
+	)
 
+	// 构造日志
+	logger := zap.New(cores, options...)
 	return logger.Sugar()
 }
 

@@ -232,6 +232,7 @@ func Fatalwc(msg string, ctx context.Context, keysAndValues ...interface{}) {
 }
 
 func Sync() {
+	defaultLogger.With()
 	if defaultLoggerStatus {
 		defaultLogger.Sync()
 	}

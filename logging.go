@@ -2,10 +2,8 @@ package joker
 
 import (
 	"fmt"
-	"github.com/braveghost/meteor/errutil"
 	"github.com/braveghost/meteor/file"
 	"github.com/braveghost/meteor/mode"
-	"github.com/braveghost/viper"
 	"github.com/micro/go-micro/server"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -43,9 +41,6 @@ var (
 		EncodeCaller:   zapcore.ShortCallerEncoder, // 全路径编码器
 	}
 
-	// 从 viper 获取日志配置信息
-	viperKeyLoggerPath = "service.log_path"
-	viperKeyLoggerName = "service.log_name"
 )
 
 var (
@@ -74,14 +69,6 @@ func SetLogPathByEnv() {
 		log.Panicf("Logging.SetLogPathAuto.DirNotExistCreate.Error || path=%v | err=%v", logPathPrefix, LogPathErr)
 	}
 
-}
-
-// 根据 viper 配置信息存储路径
-func SetLogPathByViper(key string) {
-	SetLogPath(viper.GetString(key))
-	if !file.DirNotExistCreate(logPathPrefix) {
-		log.Panicf("Logging.SetLogPathByViper.DirNotExistCreate.Error | path=%v | err=%v", logPathPrefix, LogPathErr)
-	}
 }
 
 // 默认设置日志文件存放路径
@@ -230,29 +217,6 @@ func initDefaultLogger(name string, md mode.ModeType) {
 	if defaultLogger != nil {
 		defaultLoggerStatus = true
 	}
-}
-
-// 修改 viper 日志配置信息 key
-func SetViperKey(name, value string) {
-	switch name {
-	case "name":
-		viperKeyLoggerName = value
-	case "path":
-		viperKeyLoggerPath = value
-	}
-}
-
-// 通过 viper 设置日志路径并初始化 logger
-func GetLoggerByViper(md string) *zap.SugaredLogger {
-	name := viper.GetString(viperKeyLoggerName)
-	fmt.Println(name)
-	if name == "" {
-		errutil.CheckErrPanic(LogNameErr)
-	}
-
-	m := mode.ModeType(md)
-	SetLogPathByViper(viperKeyLoggerPath)
-	return GetLogger(name, m)
 }
 
 // 从 context 获取request id

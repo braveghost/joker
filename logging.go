@@ -1,6 +1,7 @@
 package joker
 
 import (
+	"fmt"
 	"github.com/braveghost/meteor/file"
 	"github.com/braveghost/meteor/mode"
 	"github.com/pkg/errors"
@@ -56,6 +57,15 @@ var (
 func init() {
 	// 自动设置当前项目路径为日志路径
 	InitLogger(mode.ModeLocal)
+}
+
+
+func SetServiceName(name string) {
+	defaultServiceName = name
+}
+
+func SetLogName(name string) {
+	defaultLoggerFileName = name
 }
 
 func SetTraceIdKey(key string) {
@@ -143,6 +153,7 @@ func InitLogger(md mode.ModeType) {
 			ErrRr:       GetDefaultErrRollRule(defaultLoggerFileName + "_error"),
 		},
 	}
+	fmt.Println(defaultLogger.conf)
 	defaultLogger.initLogger()
 }
 

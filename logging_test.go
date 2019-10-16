@@ -8,11 +8,11 @@ import (
 
 func TestGetRequestId(t *testing.T) {
 	ct := context.Background()
-	ct = context.WithValue(ct, requestIdKey, 123)
-	fmt.Println(GetRequestId(ct))
+	ct = context.WithValue(ct, traceIdKey, 123)
+	fmt.Println(GetTraceId(ct))
 
 	ct1 := context.Background()
 	ct = context.WithValue(ct1, "xxx", 123)
-	fmt.Println(GetRequestId(ct))
+	fmt.Println(GetTraceId(ct))
 
 }

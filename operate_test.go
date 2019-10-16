@@ -6,21 +6,27 @@ import (
 	"testing"
 )
 
-func TestDebugwc(t *testing.T) {
-	//ct := context.Background()
-	//ct = context.WithValue(ct, requestIdKey, 123)
-	//fmt.Println(GetRequestId(ct))
-	//
-	//Debugwc("test", ct)
-	//
-	//ct1 := context.Background()
-	//ct = context.WithValue(ct1, "xxx", 123)
-	//fmt.Println(GetRequestId(ct))
+func TestInitLogger(t *testing.T) {
 
-	GetLogger("tt", mode.ModePro)
+	InitLogger(mode.ModeLocal)
 	defer Sync() // flushes buffer, if any
 
 	fmt.Println(defaultLogger)
 	Debug("ddddd")
 	Errorw("test err")
+}
+
+
+func TestNewLogger(t *testing.T) {
+
+	name := ""
+	err := NewLogger(&LoggingConf{Path:"log", Name:name})
+	if err != nil {
+		return
+	}
+	defer GetLogger(name).Sync() // flushes buffer, if any
+
+	fmt.Println(defaultLogger)
+	GetLogger(name).Debug("ddddd")
+	GetLogger(name).Errorw("test err")
 }

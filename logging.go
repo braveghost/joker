@@ -1,10 +1,8 @@
 package joker
 
 import (
-	"fmt"
 	"github.com/braveghost/meteor/file"
 	"github.com/braveghost/meteor/mode"
-	"github.com/micro/go-micro/server"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -12,20 +10,22 @@ import (
 	"log"
 	"os"
 	"path"
-	"time"
+	"sync"
+)
+
+const (
+	// 环境变量
+	envKeyLogPath = "LOGGING_JOKER_PATH"
 )
 
 var (
-	// request_id key
-	requestIdKey = "request_id"
-	// 环境变量
-	envKeyLogPathPrefix = "LOGGING_LOGGER_PATH"
-	// 默认日志存放路径件相对路径
-	logPathPrefix = "log"
+	// traceId key
+	traceIdKey = "trace_id"
 
-	defaultLogger       *zap.SugaredLogger
-	defaultLoggerName   = "init_default"
-	defaultLoggerStatus bool
+	// 默认日志存放路径件相对路径
+	defaultLoggerPath     = "log"
+	defaultLoggerFileName = "joker"
+	defaultServiceName    = "joker"
 
 	defaultEncoderConfig = &zapcore.EncoderConfig{
 		TimeKey:        "time",
@@ -41,32 +41,35 @@ var (
 		EncodeCaller:   zapcore.ShortCallerEncoder, // 全路径编码器
 	}
 
+	loggers = map[string]*Logging{}
+
+	defaultLogger *Logging
+	traceOnce     sync.Once
+	pathOnce      sync.Once
 )
 
 var (
-	LogPathErr = errors.New("log path error")
-	LogNameErr = errors.New("log name error")
+	LogPathError    = errors.New("log path error")
+	LoggerInitError = errors.New("logger init error")
 )
 
 func init() {
 	// 自动设置当前项目路径为日志路径
-	SetLogPathAuto()
-	GetLogger(defaultLoggerName, mode.ModeLocal)
-
+	InitLogger(mode.ModeLocal)
 }
 
-func SetRequestIdKey(key string) {
-	requestIdKey = key
+func SetTraceIdKey(key string) {
+	traceOnce.Do(func() {
+		traceIdKey = key
+	})
+
 }
 
 // 根据环境变量设置日志文件存放路径
 func SetLogPathByEnv() {
-	pt := os.Getenv(envKeyLogPathPrefix)
+	pt := os.Getenv(envKeyLogPath)
 	if pt != "" {
-		logPathPrefix = path.Join(pt, logPathPrefix)
-	}
-	if !file.DirNotExistCreate(logPathPrefix) {
-		log.Panicf("Logging.SetLogPathAuto.DirNotExistCreate.Error || path=%v | err=%v", logPathPrefix, LogPathErr)
+		SetLogPath(path.Join(pt, defaultLoggerPath))
 	}
 
 }
@@ -74,17 +77,21 @@ func SetLogPathByEnv() {
 // 默认设置日志文件存放路径
 func SetLogPathAuto() {
 	pt, _ := os.Getwd()
-	SetLogPath(path.Join(pt, logPathPrefix))
+	SetLogPath(path.Join(pt, defaultLoggerPath))
+
 }
+
+const setLogPathLogMsg = "Logging.SetLogPathAuto.DirNotExistCreate.Error || path=%s | err=%s"
 
 // 手动设置固定路径
 func SetLogPath(pt string) {
-	logPathPrefix = pt
-	log.Printf("Logging.SetLogPath || path=%v", logPathPrefix)
-}
+	pathOnce.Do(func() {
+		defaultLoggerPath = pt
+		if !file.DirNotExistCreate(defaultLoggerPath) {
+			log.Panicf(setLogPathLogMsg, defaultLoggerPath, LogPathError.Error())
+		}
 
-func Fields(fields ...zap.Field) []zap.Field {
-	return fields
+	})
 }
 
 // 根据 mode 获取日志输出等级
@@ -96,21 +103,111 @@ func getLevel(md mode.ModeType) zapcore.Level {
 	return level
 }
 
-// 初始化 logger
-func InitLogger(md mode.ModeType, outRr, errRr *RollRule, fields []zap.Field, ec *zapcore.EncoderConfig) *zap.SugaredLogger {
-
-	if ec == nil {
-		// 兜底配置
-		ec = defaultEncoderConfig
+// 获取默认日志对象
+func GetLogger(name string) *Logging {
+	if lg, ok := loggers[name]; ok {
+		return lg
 	}
+	return nil
+}
+
+const newLoggerPathLogMsg = "GetLogger.VerifyLogPath.Error || path=%s | name=%s |err=%s\n"
+
+// 初始化日志对象对象
+func NewLogger(conf *LoggingConf) error {
+	// 确定路径
+	if !file.IsDir(conf.Path) {
+		log.Printf(newLoggerPathLogMsg, conf.Path, conf.Name, LogPathError.Error())
+		return LogPathError
+	}
+	tmp := &Logging{
+		conf: conf,
+	}
+	tmp.initLogger()
+	if !tmp.status {
+		return LoggerInitError
+	}
+	loggers[conf.Name] = tmp
+	return nil
+}
+
+// 初始化 default logger
+func InitLogger(md mode.ModeType) {
+	defaultLogger = &Logging{
+		conf: &LoggingConf{
+			ServiceName: defaultServiceName,
+			Name:        defaultLoggerFileName,
+			Path:        defaultLoggerPath,
+			Mode:        md,
+			OutRr:       GetDefaultRollRule(defaultLoggerFileName),
+			ErrRr:       GetDefaultErrRollRule(defaultLoggerFileName + "_error"),
+		},
+	}
+	defaultLogger.initLogger()
+}
+
+// 从 context 获取request id
+func GetTraceId(ctx context.Context) interface{} {
+	return ctx.Value(traceIdKey)
+}
+
+type LoggingConf struct {
+	*zapcore.EncoderConfig
+	ServiceName  string
+	Name         string
+	Path         string
+	Mode         mode.ModeType
+	OutRr, ErrRr *RollRule
+	Fields       []zap.Field // 扩展输出字段
+}
+
+func (lc LoggingConf) GetPath() string {
+	if len(lc.Path) == 0 {
+		return defaultLoggerPath
+	}
+	return lc.Path
+}
+
+func (lc LoggingConf) GetName() string {
+	if len(lc.Name) == 0 {
+		return defaultLoggerFileName
+	}
+	return lc.Name
+}
+
+func (lc LoggingConf) ExtendField() []zap.Field {
+	if len(lc.ServiceName) == 0 {
+		return lc.Fields
+	}
+	return append(lc.Fields, zap.String("service_name", lc.ServiceName))
+}
+
+type Logging struct {
+	logger *zap.SugaredLogger
+	status bool
+	conf   *LoggingConf
+}
+
+// 初始化 logger
+func (lg *Logging) initLogger() {
+	encoderConfig := lg.conf.EncoderConfig
+	if encoderConfig == nil {
+		// 兜底配置
+		encoderConfig = defaultEncoderConfig
+	}
+
+	outRr := lg.conf.OutRr
 
 	if outRr == nil {
 		// 兜底配置
 		outRr = &defaultRollRule
+
 	}
 
+	outRr.Filepath = lg.conf.GetPath()
+	outRr.Filename = lg.conf.GetName()
 	// 设置日志级别
-	level := getLevel(md)
+	level := getLevel(lg.conf.Mode)
 
 	var outWriter []zapcore.WriteSyncer
 
@@ -124,11 +221,13 @@ func InitLogger(md mode.ModeType, outRr, errRr *RollRule, fields []zap.Field, ec
 		outWriter = append(outWriter, zapcore.AddSync(os.Stdout))
 	}
 	outputCore := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(*ec), // 编码器配置
+		zapcore.NewConsoleEncoder(*encoderConfig), // 编码器配置
 		zapcore.NewMultiWriteSyncer(outWriter...),
 		zap.NewAtomicLevelAt(level), // 日志级别
 	)
-	fmt.Println(outputCore)
+
+	var cores = []zapcore.Core{outputCore}
+
 	var options = []zap.Option{
 		// 开启堆栈跟踪
 		zap.AddCaller(),
@@ -137,14 +236,17 @@ func InitLogger(md mode.ModeType, outRr, errRr *RollRule, fields []zap.Field, ec
 		// 开启文件及行号
 		zap.Development(),
 		// 设置初始化字段
-		zap.Fields(fields...),
+		zap.Fields(lg.conf.ExtendField()...),
 		zap.ErrorOutput(zapcore.AddSync(os.Stderr)),
 	}
 
 	var errCore zapcore.Core
+	errRr := lg.conf.ErrRr
 
 	if errRr != nil {
 		// 无默认, 错误日志规则传入 nil 表示不独立写错误日志文件
+		errRr.Filepath = lg.conf.GetPath()
+		errRr.Filename = lg.conf.GetName()
 
 		var errWriter []zapcore.WriteSyncer
 
@@ -158,68 +260,255 @@ func InitLogger(md mode.ModeType, outRr, errRr *RollRule, fields []zap.Field, ec
 			errWriter = append(errWriter, zapcore.AddSync(os.Stdout))
 		}
 		errCore = zapcore.NewCore(
-			zapcore.NewConsoleEncoder(*ec), // 编码器配置
+			zapcore.NewConsoleEncoder(*encoderConfig), // 编码器配置
 			zapcore.NewMultiWriteSyncer(errWriter...),
 			zap.NewAtomicLevelAt(zap.ErrorLevel), // 日志级别
 		)
 	}
+	if errCore != nil {
+		cores = append(cores, errCore)
+	}
 
-	cores := zapcore.NewTee(
-		outputCore,
-		errCore,
-	)
+	tee := zapcore.NewTee(cores...)
 
 	// 构造日志
-	logger := zap.New(cores, options...)
-	return logger.Sugar()
+	lg.logger = zap.New(tee, options...).Sugar()
+	lg.status = true
 }
 
-// 日志中间件
-func NewLogWrap() server.HandlerWrapper {
-	return func(fn server.HandlerFunc) server.HandlerFunc {
-		return func(ctx context.Context, req server.Request, rsp interface{}) error {
+func (lg *Logging) FullPath() string {
+	return path.Join(lg.conf.Path, lg.conf.Name)
+}
 
-			Infow("[middle start]", "Service", req.Service(), "Method", req.Method(), "req", req)
-			s := time.Now()
-
-			var err error
-			err = fn(ctx, req, rsp)
-			defer Infow("[middle end]", "Service", req.Service(), "Method", req.Method(), "time", time.Since(s), "req", req, "rsp", rsp, "err", err)
-			return err
-		}
+// Debug uses fmt.Sprint to construct and log a message.
+func (lg *Logging) Debug(args ...interface{}) {
+	if lg.status {
+		lg.logger.Debug(args...)
 	}
 }
 
-// 初始化日志
-func GetLogger(name string, md mode.ModeType) *zap.SugaredLogger {
-
-	// 确定路径
-	if !file.IsDir(logPathPrefix) {
-		if name == defaultLoggerName {
-			log.Printf("GetLogger.VerifyLogPath.Error || path=%v | name=%v |err=%v\n",
-				logPathPrefix, name, LogPathErr)
-		}
-	} else {
-		initDefaultLogger(name, md)
-	}
-
-	return defaultLogger
-}
-
-func initDefaultLogger(name string, md mode.ModeType) {
-	defaultLogger = InitLogger(
-		md,
-		GetDefaultRollRule(name),
-		GetDefaultErrRollRule(name+"_error"),
-		Fields(zap.String("srv_name", name)),
-		nil,
-	)
-	if defaultLogger != nil {
-		defaultLoggerStatus = true
+// Info uses fmt.Sprint to construct and log a message.
+func (lg *Logging) Info(args ...interface{}) {
+	if lg.status {
+		lg.logger.Info(args...)
 	}
 }
 
-// 从 context 获取request id
-func GetRequestId(ctx context.Context) interface{} {
-	return ctx.Value(requestIdKey)
+// Warn uses fmt.Sprint to construct and log a message.
+func (lg *Logging) Warn(args ...interface{}) {
+	if lg.status {
+		lg.logger.Warn(args...)
+	}
+}
+
+// Error uses fmt.Sprint to construct and log a message.
+func (lg *Logging) Error(args ...interface{}) {
+	if lg.status {
+		lg.logger.Error(args...)
+	}
+}
+
+// DPanic uses fmt.Sprint to construct and log a message. In development, the
+// logger then panics. (See DPanicLevel for details.)
+func (lg *Logging) DPanic(args ...interface{}) {
+	if lg.status {
+		lg.logger.DPanic(args...)
+	}
+}
+
+// Panic uses fmt.Sprint to construct and log a message, then panics.
+func (lg *Logging) Panic(args ...interface{}) {
+	if lg.status {
+		lg.logger.Panic(args...)
+	}
+}
+
+// Fatal uses fmt.Sprint to construct and log a message, then calls os.Exit.
+func (lg *Logging) Fatal(args ...interface{}) {
+	if lg.status {
+		lg.logger.Fatal(args...)
+	}
+}
+
+// Debugf uses fmt.Sprintf to log a templated message.
+func (lg *Logging) Debugf(template string, args ...interface{}) {
+	if lg.status {
+		lg.logger.Debugf(template, args...)
+	}
+}
+
+// Infof uses fmt.Sprintf to log a templated message.
+func (lg *Logging) Infof(template string, args ...interface{}) {
+	if lg.status {
+		lg.logger.Infof(template, args...)
+	}
+}
+
+// Warnf uses fmt.Sprintf to log a templated message.
+func (lg *Logging) Warnf(template string, args ...interface{}) {
+	if lg.status {
+		lg.logger.Warnf(template, args...)
+	}
+}
+
+// Errorf uses fmt.Sprintf to log a templated message.
+func (lg *Logging) Errorf(template string, args ...interface{}) {
+	if lg.status {
+		lg.logger.Errorf(template, args...)
+	}
+}
+
+// DPanicf uses fmt.Sprintf to log a templated message. In development, the
+// logger then panics. (See DPanicLevel for details.)
+func (lg *Logging) DPanicf(template string, args ...interface{}) {
+	if lg.status {
+		lg.logger.DPanicf(template, args...)
+	}
+}
+
+// Panicf uses fmt.Sprintf to log a templated message, then panics.
+func (lg *Logging) Panicf(template string, args ...interface{}) {
+	if lg.status {
+		lg.logger.Panicf(template, args...)
+	}
+}
+
+// Fatalf uses fmt.Sprintf to log a templated message, then calls os.Exit.
+func (lg *Logging) Fatalf(template string, args ...interface{}) {
+	if lg.status {
+		lg.logger.Fatalf(template, args...)
+	}
+}
+
+// Debugw logs a message with some additional context. The variadic key-value
+// pairs are treated as they are in With.
+//
+// When debug-level logging is disabled, this is much faster than
+//  s.With(keysAndValues).Debug(msg)
+func (lg *Logging) Debugw(msg string, keysAndValues ...interface{}) {
+	if lg.status {
+		lg.logger.Debugw(msg, keysAndValues...)
+	}
+}
+
+// Infow logs a message with some additional context. The variadic key-value
+// pairs are treated as they are in With.
+func (lg *Logging) Infow(msg string, keysAndValues ...interface{}) {
+	if lg.status {
+		lg.logger.Infow(msg, keysAndValues...)
+	}
+}
+
+// Warnw logs a message with some additional context. The variadic key-value
+// pairs are treated as they are in With.
+func (lg *Logging) Warnw(msg string, keysAndValues ...interface{}) {
+	if lg.status {
+		lg.logger.Warnw(msg, keysAndValues...)
+	}
+}
+
+// Errorw logs a message with some additional context. The variadic key-value
+// pairs are treated as they are in With.
+func (lg *Logging) Errorw(msg string, keysAndValues ...interface{}) {
+	if lg.status {
+		lg.logger.Errorw(msg, keysAndValues...)
+	}
+}
+
+// DPanicw logs a message with some additional context. In development, the
+// logger then panics. (See DPanicLevel for details.) The variadic key-value
+// pairs are treated as they are in With.
+func (lg *Logging) DPanicw(msg string, keysAndValues ...interface{}) {
+	if lg.status {
+		lg.logger.DPanicw(msg, keysAndValues...)
+	}
+}
+
+// Panicw logs a message with some additional context, then panics. The
+// variadic key-value pairs are treated as they are in With.
+func (lg *Logging) Panicw(msg string, keysAndValues ...interface{}) {
+	if lg.status {
+		lg.logger.Panicw(msg, keysAndValues...)
+	}
+}
+
+// Fatalw logs a message with some additional context, then calls os.Exit. The
+// variadic key-value pairs are treated as they are in With.
+func (lg *Logging) Fatalw(msg string, keysAndValues ...interface{}) {
+	if lg.status {
+		lg.logger.Fatalw(msg, keysAndValues...)
+	}
+}
+
+// Debugw logs a message with some additional context. The variadic key-value
+// pairs are treated as they are in With.
+//
+// When debug-level logging is disabled, this is much faster than
+//  s.With(keysAndValues).Debug(msg)
+func (lg *Logging) Debugwc(msg string, ctx context.Context, keysAndValues ...interface{}) {
+	if lg.status {
+		keysAndValues = append(keysAndValues, traceIdKey, GetTraceId(ctx))
+		lg.logger.Debugw(msg, keysAndValues..., )
+	}
+}
+
+// Infow logs a message with some additional context. The variadic key-value
+// pairs are treated as they are in With.
+func (lg *Logging) Infowc(msg string, ctx context.Context, keysAndValues ...interface{}) {
+	if lg.status {
+		keysAndValues = append(keysAndValues, traceIdKey, GetTraceId(ctx))
+		lg.logger.Infow(msg, keysAndValues...)
+	}
+}
+
+// Warnw logs a message with some additional context. The variadic key-value
+// pairs are treated as they are in With.
+func (lg *Logging) Warnwc(msg string, ctx context.Context, keysAndValues ...interface{}) {
+	if lg.status {
+		keysAndValues = append(keysAndValues, traceIdKey, GetTraceId(ctx))
+		lg.logger.Warnw(msg, keysAndValues...)
+	}
+}
+
+// Errorw logs a message with some additional context. The variadic key-value
+// pairs are treated as they are in With.
+func (lg *Logging) Errorwc(msg string, ctx context.Context, keysAndValues ...interface{}) {
+	if lg.status {
+		keysAndValues = append(keysAndValues, traceIdKey, GetTraceId(ctx))
+		lg.logger.Errorw(msg, keysAndValues...)
+	}
+}
+
+// DPanicw logs a message with some additional context. In development, the
+// logger then panics. (See DPanicLevel for details.) The variadic key-value
+// pairs are treated as they are in With.
+func (lg *Logging) DPanicwc(msg string, ctx context.Context, keysAndValues ...interface{}) {
+	if lg.status {
+		keysAndValues = append(keysAndValues, traceIdKey, GetTraceId(ctx))
+		lg.logger.DPanicw(msg, keysAndValues...)
+	}
+}
+
+// Panicw logs a message with some additional context, then panics. The
+// variadic key-value pairs are treated as they are in With.
+func (lg *Logging) Panicwc(msg string, ctx context.Context, keysAndValues ...interface{}) {
+	if lg.status {
+		keysAndValues = append(keysAndValues, traceIdKey, GetTraceId(ctx))
+		lg.logger.Panicw(msg, keysAndValues...)
+	}
+}
+
+// Fatalw logs a message with some additional context, then calls os.Exit. The
+// variadic key-value pairs are treated as they are in With.
+func (lg *Logging) Fatalwc(msg string, ctx context.Context, keysAndValues ...interface{}) {
+	if lg.status {
+		keysAndValues = append(keysAndValues, traceIdKey, GetTraceId(ctx))
+		lg.logger.Fatalw(msg, keysAndValues...)
+	}
+}
+
+func (lg *Logging) Sync() {
+	if lg.status {
+		lg.logger.Sync()
+	}
 }

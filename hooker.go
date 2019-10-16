@@ -39,7 +39,8 @@ const (
 type RollRule struct {
 	Logger       string        // 日志模块
 	RotationType rotationType  // 日志滚动方式
-	Filename     string        // 日志文件路径
+	Filename     string        // 日志文件名称
+	Filepath     string        // 日志文件名称
 	MaxSize      int           // 每个日志文件保存的最大尺寸 单位：M
 	MaxBackups   int           // 日志文件最多保存多少个备份
 	MaxAge       int           // 文件最多保存多少天
@@ -50,8 +51,9 @@ type RollRule struct {
 func (rr RollRule) maxAge() time.Duration {
 	return time.Duration(rr.MaxAge) * time.Hour * 24
 }
+
 func (rr RollRule) fullName() string {
-	return path.Join(logPathPrefix, rr.Filename+".log")
+	return path.Join(rr.Filepath, rr.Filename+".log")
 }
 
 func getOutHook(outRr *RollRule) zapcore.WriteSyncer {

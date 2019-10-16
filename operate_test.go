@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/braveghost/meteor/mode"
 	"testing"
+	"time"
 )
 
 func TestInitLogger(t *testing.T) {
@@ -12,15 +13,17 @@ func TestInitLogger(t *testing.T) {
 	defer Sync() // flushes buffer, if any
 
 	fmt.Println(defaultLogger)
-	Debug("ddddd")
-	Errorw("test err")
+	for {
+		Debug("ddddd")
+		Errorw("test err")
+		time.Sleep(time.Second)
+	}
 }
-
 
 func TestNewLogger(t *testing.T) {
 
 	name := ""
-	err := NewLogger(&LoggingConf{Path:"log", Name:name})
+	err := NewLogger(&LoggingConf{Path: "log", Name: name})
 	if err != nil {
 		return
 	}

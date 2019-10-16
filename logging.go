@@ -1,7 +1,6 @@
 package joker
 
 import (
-	"fmt"
 	"github.com/braveghost/meteor/file"
 	"github.com/braveghost/meteor/mode"
 	"github.com/pkg/errors"
@@ -58,7 +57,6 @@ func init() {
 	// 自动设置当前项目路径为日志路径
 	InitLogger(mode.ModeLocal)
 }
-
 
 func SetServiceName(name string) {
 	defaultServiceName = name
@@ -153,7 +151,6 @@ func InitLogger(md mode.ModeType) {
 			ErrRr:       GetDefaultErrRollRule(defaultLoggerFileName + "_error"),
 		},
 	}
-	fmt.Println(defaultLogger.conf)
 	defaultLogger.initLogger()
 }
 
@@ -184,6 +181,13 @@ func (lc LoggingConf) GetName() string {
 		return defaultLoggerFileName
 	}
 	return lc.Name
+}
+
+func (lc LoggingConf) GetErrorName() string {
+	if len(lc.Name) == 0 {
+		return defaultLoggerFileName + "_error"
+	}
+	return lc.Name + "_error"
 }
 
 func (lc LoggingConf) ExtendField() []zap.Field {
@@ -257,7 +261,7 @@ func (lg *Logging) initLogger() {
 	if errRr != nil {
 		// 无默认, 错误日志规则传入 nil 表示不独立写错误日志文件
 		errRr.Filepath = lg.conf.GetPath()
-		errRr.Filename = lg.conf.GetName()
+		errRr.Filename = lg.conf.GetErrorName()
 
 		var errWriter []zapcore.WriteSyncer
 

@@ -12,20 +12,20 @@ import (
 var (
 	defaultErrRollRule = RollRule{
 		RotationType: RotationTime,
-		Filename:     "default", // 日志文件路径
-		MaxSize:      1,         // 每个日志文件保存的最大尺寸 单位：M
-		MaxBackups:   10,        // 日志文件最多保存多少个备份
-		MaxAge:       7,         // 文件最多保存多少天
-		//Compress:   true,      // 是否压缩
+		MaxSize:      50,              // 每个日志文件保存的最大尺寸 单位：M
+		MaxBackups:   10,             // 日志文件最多保存多少个备份
+		MaxAge:       7,              // 文件最多保存多少天
+		RotationTime: time.Hour * 24, // 每天, 内部也是默认
 	}
+
+
 	defaultRollRule = RollRule{
 		RotationType: RotationTime,
+		MaxSize:      50, // 每个日志文件保存的最大尺寸 单位：M
+		MaxBackups:   10,  // 日志文件最多保存多少个备份
+		MaxAge:       7, // 文件最多保存多少天
+		RotationTime: time.Hour * 24, // 每天, 内部也是默认
 
-		Filename:   "default_error", // 日志文件路径
-		MaxSize:    100,             // 每个日志文件保存的最大尺寸 单位：M
-		MaxBackups: 10,              // 日志文件最多保存多少个备份
-		MaxAge:     100,             // 文件最多保存多少天
-		//Compress:   true,            // 是否压缩
 	}
 )
 
@@ -40,12 +40,12 @@ type RollRule struct {
 	Logger       string        // 日志模块
 	RotationType rotationType  // 日志滚动方式
 	Filename     string        // 日志文件名称
-	Filepath     string        // 日志文件名称
+	Filepath     string        // 日志文件路径
 	MaxSize      int           // 每个日志文件保存的最大尺寸 单位：M
 	MaxBackups   int           // 日志文件最多保存多少个备份
 	MaxAge       int           // 文件最多保存多少天
 	Compress     bool          // 是否压缩
-	RotationTime time.Duration //日志切割时间间隔
+	RotationTime time.Duration // 日志切割时间间隔
 }
 
 func (rr RollRule) maxAge() time.Duration {

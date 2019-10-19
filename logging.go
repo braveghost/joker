@@ -233,7 +233,7 @@ func (lg *Logging) initLogger() {
 		// 开启堆栈跟踪
 		zap.AddCaller(),
 		// 因为 operate 包装了一层所以堆栈信息加1
-		zap.AddCallerSkip(1),
+		zap.AddCallerSkip(2),
 		// 开启文件及行号
 		zap.Development(),
 		// 设置初始化字段

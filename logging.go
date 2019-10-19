@@ -25,7 +25,7 @@ var (
 	// 默认日志存放路径件相对路径
 	defaultLoggerPath     = "log"
 	defaultLoggerFileName = "joker"
-	defaultServiceName    = "joker"
+	defaultServiceName    string
 
 	defaultEncoderConfig = &zapcore.EncoderConfig{
 		TimeKey:        "time",

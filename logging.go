@@ -19,6 +19,10 @@ const (
 )
 
 var (
+	// initflag
+
+	initFlag bool
+
 	// traceId key
 	traceIdKey = "trace_id"
 
@@ -100,15 +104,6 @@ func SetLogPath(pt string) {
 		}
 
 	})
-}
-
-// 根据 mode 获取日志输出等级
-func getLevel(md mode.ModeType) zapcore.Level {
-	level := zapcore.DebugLevel
-	if md == mode.ModePro {
-		level = zapcore.InfoLevel
-	}
-	return level
 }
 
 // 获取默认日志对象
@@ -201,47 +196,38 @@ type Logging struct {
 	logger *zap.SugaredLogger
 	status bool
 	conf   *LoggingConf
+	level  zapcore.Level
+}
+
+// 根据 mode 设置日志输出等级
+func (lg *Logging) setLevel() {
+	lg.level = zapcore.DebugLevel
+	if lg.conf.Mode == mode.ModePro {
+		lg.level = zapcore.InfoLevel
+	}
 }
 
 // 初始化 logger
 func (lg *Logging) initLogger() {
+	lg.setLevel()
 	encoderConfig := lg.conf.EncoderConfig
 	if encoderConfig == nil {
 		// 兜底配置
 		encoderConfig = defaultEncoderConfig
 	}
-
-	outRr := lg.conf.OutRr
-
-	if outRr == nil {
-		// 兜底配置
-		outRr = &defaultRollRule
-
-	}
-
-	outRr.Filepath = lg.conf.GetPath()
-	outRr.Filename = lg.conf.GetName()
-	// 设置日志级别
-	level := getLevel(lg.conf.Mode)
-
-	var outWriter []zapcore.WriteSyncer
-
-	outHook := getOutHook(outRr)
-	if outHook != nil {
-		outWriter = append(outWriter, outHook)
-	}
-
-	if level == zapcore.DebugLevel {
-		// 打印到控制台和文件
-		outWriter = append(outWriter, zapcore.AddSync(os.Stdout))
-	}
-	outputCore := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(*encoderConfig), // 编码器配置
-		zapcore.NewMultiWriteSyncer(outWriter...),
-		zap.NewAtomicLevelAt(level), // 日志级别
+	var (
+		cores   = []zapcore.Core{}
+		errCore zapcore.Core
 	)
 
-	var cores = []zapcore.Core{outputCore}
+	cores = append(cores, lg.getOutputCore(encoderConfig))
+
+	errCore = lg.getErrorCore(encoderConfig)
+	if errCore != nil {
+		cores = append(cores, errCore)
+	}
+
+	tee := zapcore.NewTee(cores...)
 
 	var options = []zap.Option{
 		// 开启堆栈跟踪
@@ -254,8 +240,49 @@ func (lg *Logging) initLogger() {
 		zap.Fields(lg.conf.ExtendField()...),
 		zap.ErrorOutput(zapcore.AddSync(os.Stderr)),
 	}
+	// 构造日志
+	lg.logger = zap.New(tee, options...).Sugar()
+	lg.status = true
+}
 
-	var errCore zapcore.Core
+func (lg *Logging) getOutputCore(encoderConfig *zapcore.EncoderConfig) zapcore.Core {
+
+	outRr := lg.conf.OutRr
+
+	if outRr == nil {
+		// 兜底配置
+		outRr = &defaultRollRule
+
+	}
+
+	outRr.Filepath = lg.conf.GetPath()
+	outRr.Filename = lg.conf.GetName()
+	// 设置日志级别
+
+	var (
+		outHook   zapcore.WriteSyncer
+		outWriter []zapcore.WriteSyncer
+	)
+	if initFlag {
+		outHook = getOutHook(outRr)
+		if outHook != nil {
+			outWriter = append(outWriter, outHook)
+		}
+	}
+
+	if lg.level == zapcore.DebugLevel {
+		// 打印到控制台和文件
+		outWriter = append(outWriter, zapcore.AddSync(os.Stdout))
+	}
+	return zapcore.NewCore(
+		zapcore.NewConsoleEncoder(*encoderConfig), // 编码器配置
+		zapcore.NewMultiWriteSyncer(outWriter...),
+		zap.NewAtomicLevelAt(lg.level), // 日志级别
+	)
+}
+
+// 生成错误日志引擎
+func (lg *Logging) getErrorCore(encoderConfig *zapcore.EncoderConfig) zapcore.Core {
 	errRr := lg.conf.ErrRr
 
 	if errRr != nil {
@@ -263,32 +290,29 @@ func (lg *Logging) initLogger() {
 		errRr.Filepath = lg.conf.GetPath()
 		errRr.Filename = lg.conf.GetErrorName()
 
-		var errWriter []zapcore.WriteSyncer
+		var (
+			errWriter []zapcore.WriteSyncer
+			errHook   zapcore.WriteSyncer
+		)
+		if initFlag {
+			errHook = getErrHook(errRr)
 
-		errHook := getErrHook(errRr)
-		if errHook != nil {
-			errWriter = append(errWriter, errHook)
+			if errHook != nil {
+				errWriter = append(errWriter, errHook)
+			}
+
 		}
-
-		if level == zapcore.DebugLevel {
+		if lg.level == zapcore.DebugLevel {
 			// 打印到控制台和文件
 			errWriter = append(errWriter, zapcore.AddSync(os.Stdout))
 		}
-		errCore = zapcore.NewCore(
+		return zapcore.NewCore(
 			zapcore.NewConsoleEncoder(*encoderConfig), // 编码器配置
 			zapcore.NewMultiWriteSyncer(errWriter...),
 			zap.NewAtomicLevelAt(zap.ErrorLevel), // 日志级别
 		)
 	}
-	if errCore != nil {
-		cores = append(cores, errCore)
-	}
-
-	tee := zapcore.NewTee(cores...)
-
-	// 构造日志
-	lg.logger = zap.New(tee, options...).Sugar()
-	lg.status = true
+	return nil
 }
 
 func (lg *Logging) FullPath() string {

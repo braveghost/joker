@@ -1,4 +1,4 @@
-package joker
+package logging
 
 import (
 	"fmt"
@@ -23,13 +23,13 @@ func TestInitLogger(t *testing.T) {
 func TestNewLogger(t *testing.T) {
 
 	name := ""
-	err := NewLogger(&LoggingConf{Path: "log", Name: name})
+	err := NewLogger(&Options{Path: "log", FileName: name})
 	if err != nil {
 		return
 	}
-	defer GetLogger(name).Sync() // flushes buffer, if any
+	defer Logger("xxxx").Sync() // flushes buffer, if any
 
 	fmt.Println(defaultLogger)
-	GetLogger(name).Debug("ddddd")
-	GetLogger(name).Errorw("test err")
+	Logger("xxxx").Debug("ddddd")
+	Logger("xxxx").Errorw("test err")
 }

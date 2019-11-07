@@ -1,4 +1,4 @@
-package joker
+package logging
 
 import (
 	rotatelogs "github.com/lestrrat-go/file-rotatelogs"

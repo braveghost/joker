@@ -8,7 +8,7 @@ import (
 )
 
 func TestInitLogger(t *testing.T) {
-
+	OpenColor()
 	InitLogger(mode.ModeLocal)
 	defer Sync() // flushes buffer, if any
 
@@ -21,8 +21,9 @@ func TestInitLogger(t *testing.T) {
 }
 
 func TestNewLogger(t *testing.T) {
+	OpenColor()
 
-	name := ""
+	name := "xxxx"
 	err := NewLogger(&Options{Path: "log", FileName: name})
 	if err != nil {
 		return

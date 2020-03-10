@@ -64,9 +64,13 @@ func getOutHook(outRr *RollRule) zapcore.WriteSyncer {
 func getHook(rr *RollRule) zapcore.WriteSyncer {
 
 	if rr != nil {
+
+		if len(rr.Filepath) == 0{
+			return nil
+		}
+
 		switch rr.RotationType {
 		case RotationTime:
-
 			outHook, err := rotatelogs.New(
 				rr.fullName()+".%Y%m%d",
 				rotatelogs.WithLinkName(rr.fullName()),       // 生成软链，指向最新日志文件

@@ -28,7 +28,7 @@ var (
 	traceIdKey = "trace_id"
 
 	// 默认日志存放路径件相对路径
-	defaultLoggerPath     = "log"
+	defaultLoggerPath     = ""
 	defaultLoggerFileName = "joker"
 	defaultServiceName    string
 
@@ -38,16 +38,18 @@ var (
 		NameKey:        "logger",
 		CallerKey:      "caller",
 		MessageKey:     "msg",
-		StacktraceKey:  "stacktrace",
+		StacktraceKey:  "stack",
 		LineEnding:     zapcore.DefaultLineEnding,
-		EncodeLevel:    zapcore.LowercaseLevelEncoder, // 小写编码器
-		EncodeTime:     zapcore.ISO8601TimeEncoder,    // ISO8601 UTC 时间格式
+		EncodeLevel:    zapcore.CapitalLevelEncoder, // 小写编码器
+		EncodeTime:     MilliSecondTimeEncoder,
 		EncodeDuration: zapcore.SecondsDurationEncoder,
 		EncodeCaller:   zapcore.ShortCallerEncoder, // 全路径编码器
+		EncodeName:     zapcore.FullNameEncoder,
 	}
 
 	loggers = map[string]*Logging{}
 
+	skip          = 1
 	defaultLogger *Logging
 	traceOnce     sync.Once
 	pathOnce      sync.Once
@@ -57,6 +59,10 @@ var (
 	LogPathError    = errors.New("log path error")
 	LoggerInitError = errors.New("logger init error")
 )
+
+func MilliSecondTimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString(t.Format("2006-01-02T15:04:05.0000"))
+}
 
 func init() {
 	// 自动设置当前项目路径为日志路径
@@ -100,6 +106,9 @@ const setLogPathLogMsg = "Logging.SetLogPathAuto.DirNotExistCreate.Error || path
 // 手动设置固定路径
 func SetLogPath(pt string) {
 	pathOnce.Do(func() {
+		if len(pt) == 0 {
+			return
+		}
 		defaultLoggerPath = pt
 		if !file.DirNotExistCreate(defaultLoggerPath) {
 			log.Panicf(setLogPathLogMsg, defaultLoggerPath, LogPathError.Error())
@@ -121,10 +130,10 @@ const newLoggerPathLogMsg = "GetLogger.VerifyLogPath.Error || path=%s | name=%s 
 // 初始化日志对象对象
 func NewLogger(conf *Options) error {
 	// 确定路径
-	if !file.IsDir(conf.Path) {
-		log.Printf(newLoggerPathLogMsg, conf.Path, conf.FileName, LogPathError.Error())
-		return LogPathError
-	}
+	//if !file.IsDir(conf.Path) {
+	//	log.Printf(newLoggerPathLogMsg, conf.Path, conf.FileName, LogPathError.Error())
+	//	return LogPathError
+	//}
 	tmp := &Logging{
 		opts: conf,
 	}
@@ -138,6 +147,7 @@ func NewLogger(conf *Options) error {
 
 // 初始化 default logger
 func InitLogger(md mode.ModeType) {
+	skip = 2
 	defaultLogger = &Logging{
 		opts: &Options{
 			ServiceName: defaultServiceName,
@@ -162,6 +172,10 @@ var (
 	_FlagOpenColor bool
 	_FlagLowercase bool
 )
+
+func OpenColor() {
+	_FlagOpenColor = true
+}
 
 type timeLayout string
 
@@ -263,6 +277,11 @@ func (lg *Logging) initLogger() {
 		// 兜底配置
 		encoderConfig = defaultEncoderConfig
 	}
+
+	if _FlagOpenColor {
+		encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	}
+
 	var (
 		cores   = []zapcore.Core{}
 		errCore zapcore.Core
@@ -277,19 +296,16 @@ func (lg *Logging) initLogger() {
 
 	tee := zapcore.NewTee(cores...)
 
-	var options = []zap.Option{
-		// 开启堆栈跟踪
+	// 构造日志
+	lg.logger = zap.New(tee).WithOptions( // 开启堆栈跟踪
 		zap.AddCaller(),
 		// 因为 operate 包装了一层所以堆栈信息加1
-		zap.AddCallerSkip(2),
+		zap.AddCallerSkip(skip),
 		// 开启文件及行号
-		zap.Development(),
+		//zap.Development(),
 		// 设置初始化字段
 		zap.Fields(lg.opts.ExtendField()...),
-		zap.ErrorOutput(zapcore.AddSync(os.Stderr)),
-	}
-	// 构造日志
-	lg.logger = zap.New(tee, options...).Sugar()
+		zap.ErrorOutput(zapcore.AddSync(os.Stderr)) ).Sugar()
 	lg.status = true
 }
 
@@ -336,6 +352,9 @@ func (lg *Logging) getErrorCore(encoderConfig *zapcore.EncoderConfig) zapcore.Co
 	if errRr != nil {
 		// 无默认, 错误日志规则传入 nil 表示不独立写错误日志文件
 		errRr.Filepath = lg.opts.GetPath()
+		if len(errRr.Filepath) == 0 {
+			return nil
+		}
 		errRr.Filename = lg.opts.GetErrorName()
 
 		var (
